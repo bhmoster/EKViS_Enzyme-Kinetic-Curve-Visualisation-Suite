@@ -2,6 +2,22 @@ from enum import Enum
 
 import numpy as np
 
+from scipy.stats import t
+
+def format_with_uncertainty(value, uncertainty, sig=2):
+    """
+    Format a value ± uncertainty with uncertainty-driven significant figures.
+    """
+    if uncertainty <= 0 or np.isnan(uncertainty):
+        return f"{value:.3g}"
+
+    exponent = int(np.floor(np.log10(abs(uncertainty))))
+    rounded_uncertainty = round(uncertainty, -exponent + (sig - 1))
+    decimal_places = max(0, -(exponent - (sig - 1)))
+
+    rounded_value = round(value, decimal_places)
+    return f"{rounded_value:.{decimal_places}f} ± {rounded_uncertainty:.{decimal_places}f}"
+
 
 def compute_standard_error(lst):
     return np.std(lst, ddof=1) / np.sqrt(len(lst))
@@ -60,7 +76,7 @@ class UtilityUnit(Enum):
                 return UtilityUnit.Molar
 
             case _:
-                raise Exception("Could not decice unit.")
+                raise Exception("Could not decide unit.")
 
 
 class Unit:

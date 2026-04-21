@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 import os
 import re
 import sys
@@ -23,7 +21,6 @@ class Config:
         self._unit = UtilityUnit.Micro
         self._extinction_coefficient = 0.021
         self._time_coefficient = 95 / 60
-        self._read_lines = None
         self._save_fig = False
         self._log_scale = False
         self._plotter = None
@@ -49,9 +46,6 @@ class Config:
     def GetTimeCoefficient(self):
         return self._time_coefficient
 
-    def GetReadLines(self):
-        return self._read_lines
-
     def GetSaveMode(self):
         return self._save_fig
 
@@ -76,7 +70,6 @@ Usage:
     options:
         -u | --unit  <unit specifier>   => the unit used, default=micro
         -t | --title <plot title>       => the title of plot being created
-        -c | --cut   <lines>            => the amount of lines to read from data, defeault=full file
         -l | --logarithmic              => set x-axis to logarithmic scale
         -s | --save                     => whether to save the plot, default=show
 
@@ -84,9 +77,9 @@ Usage:
         femto, pico, nano, micro, milli, molar
 
     example use:
-        curve_plotter.py --save --unit "milli" --cut 5 --title "EnzymeXYZ plotted for DATA" --logarithmic MichaelisMenten
+        curve_plotter.py --save --unit "milli" --title "EnzymeXYZ plotted for DATA" --logarithmic MichaelisMenten
 
-        This will save a created Michaelis-Menton plot (based on 5 lines of data), with the specified title, using milli moles as unit.
+        This will save a created Michaelis-Menton plot, with the specified title, using milli moles as the unit and with a logarithmic scale set to the x-axis.
 """
 
     def _parseArguments(self, args):
@@ -109,10 +102,6 @@ Usage:
                     self._title = options[i + 1]
                     i += 2
 
-                case "--cut" | "-c":
-                    self._read_lines = int(options[i + 1])
-                    i += 2
-
                 case "--logarithmic" | "-l":
                     self._log_scale = True
                     i += 1
@@ -131,36 +120,70 @@ Usage:
 class DataReader:
     def __init__(self, config):
         self._config: Config = config
+        
 
     def _handle_column(self, col: [float]) -> Unit:
         """
-        handle_column
-
-        Handles a column of a data file.
-
-        First, normalizes the column. Then, computes a linear fit.
+        Handles a single replicate column:
+        - normalizes absorbance
+        - determines the maximally linear initial window
+        - computes the initial rate from that window
         """
 
-        # normalize the column
-        init_val = col[0]
-        col_norm = [entry - init_val for entry in col]
+        # --- parameters you may want to tweak ---
+        min_points = 4           # minimum points to attempt a fit
+        r2_threshold = 0.98      # linearity criterion 
 
-        # linear fit for data points
-        slope, _ = np.polyfit(list(range(len(col_norm))), col_norm, 1)
+        # --- normalize absorbance ---
+        col = np.asarray(col, dtype=float)
+        col_norm = col - col[0]
 
-        # reduction of substrate per minute
+        # time axis in seconds
+        dt = 5.0  # seconds
+        t = np.arange(len(col_norm)) * dt
+
+        # --- adaptive linear window ---
+        best_n = min_points
+        best_slope = None
+
+        for n in range(min_points, len(col_norm) + 1):
+            x = t[:n]
+            y = col_norm[:n]
+
+            # linear fit: y = m x + b
+            m, b = np.polyfit(x, y, 1)
+            y_fit = m * x + b
+
+            # compute R²
+            ss_res = np.sum((y - y_fit) ** 2)
+            ss_tot = np.sum((y - np.mean(y)) ** 2)
+
+                # guard against flat traces
+            if ss_tot == 0:
+                break
+
+            r2 = 1 - ss_res / ss_tot
+
+            if r2 < r2_threshold:
+                break
+
+            best_n = n
+            best_slope = m
+
+            # fallback (should almost never trigger)
+        if best_slope is None:
+            best_slope, _ = np.polyfit(t[:min_points], col_norm[:min_points], 1)
+
+        # --- convert slope to initial velocity ---
+        # slope is Abs/sec → convert to concentration/min
         init_velocity = (
-            slope / config.GetTimeCoefficient() / config.GetExtinctionCoefficient()
+            best_slope * 60 / config.GetExtinctionCoefficient()
         )
 
         return init_velocity
 
     def handle_file(self, file_path: str, config: Config) -> (Unit, [float]):
-        """
-        handle_file
-
-        Handles a data file.
-        """
+        """ handle_file Handles a data file. """
 
         # extract concentration from file name
         concentration = float(
@@ -169,12 +192,11 @@ class DataReader:
 
         # read data and compute initial velocity
         df = pd.read_csv(file_path, header=None)
-        if not config.GetReadLines() == None:
-            df = df.head(config.GetReadLines())
 
         reduction_cytochromeC = df.apply(self._handle_column, axis=0)
-
+        
         return Unit(concentration), reduction_cytochromeC
+
 
 
 if __name__ == "__main__":
