@@ -1,0 +1,20 @@
+{
+  "packages": ["python@latest"],
+  "env": {
+    "PIP_REQUIRE_FILE": "./requirements.txt",
+    "PIP_REQUIRE_VIRTUALENV": "true",
+    "VENV_DIR": "./.venv"
+  },
+  "shell": {
+    "init_hook": [
+      "if [ ! -d \"$VENV_DIR\" ]; then py -m venv \"$VENV_DIR\"; fi",
+      ". $VENV_DIR/bin/activate"
+    ],
+    "scripts": {
+      "update_pip": [
+        "pip install --upgrade pip",
+        "pip install -r $PIP_REQUIRE_FILE"
+      ]
+    }
+  }
+}
